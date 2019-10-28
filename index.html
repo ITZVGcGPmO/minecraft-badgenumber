@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Something</title>
+</head>
+<body>
+    Game Version: <select id="selectGameVersion" />
+    <script type="text/javascript">
+        function Get(yourUrl){
+            var Httpreq = new XMLHttpRequest(); // a new request
+            Httpreq.open("GET",yourUrl,false);
+            Httpreq.send(null);
+            return Httpreq.responseText;          
+        }
+        var versions = JSON.parse(Get("/api/item-models"));
+        var select = document.getElementById("selectGameVersion");
+        for(var i = versions.length-1; i>=0; i--) {
+            var opt = versions[i];
+            var el = document.createElement("option");
+            el.textContent = opt;
+            el.value = opt;
+            select.appendChild(el);
+        }
+    </script>
+</body>
+</html>
