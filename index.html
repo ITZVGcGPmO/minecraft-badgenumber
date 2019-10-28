@@ -13,12 +13,12 @@
             return Httpreq.responseText;          
         }
         var versions = JSON.parse(Get("/api/item-models"));
+        var iterkeys = Object.keys(versions);
         var select = document.getElementById("selectGameVersion");
-        for(var i = versions.length-1; i>=0; i--) {
-            var opt = versions[i];
+        for(var i = iterkeys.length-1; i>=0; i--) {
             var el = document.createElement("option");
-            el.textContent = opt;
-            el.value = opt;
+            el.textContent = iterkeys[i]+" "+versions[iterkeys[i]];
+            el.value = iterkeys[i];
             select.appendChild(el);
         }
     </script>

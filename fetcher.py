@@ -7,9 +7,11 @@ from time import time
 import argparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from base64 import b64decode
+from urllib.parse import unquote as urlunq
+from html import unescape as htmlunesc
 cachetime = (7*24*60*60)
 
-def read_url(url, cache=True):
+def read_url(url, cache=True, noexpire=False):
     global cachetime
     if url.startswith('http'):
         if cache:
@@ -19,7 +21,8 @@ def read_url(url, cache=True):
                     with open(cfile, 'r') as file:
                         # print('read file')
                         page = file.read()
-                        os.utime(cfile, None)
+                        if noexpire:
+                            os.utime(cfile, None)
                         return(page)
                 else:
                     os.remove(cfile)
@@ -57,30 +60,28 @@ class McAssetManager(object):
                 if time() > os.path.getmtime('cache'+os.path.sep+filename)+cachetime:
                     os.remove('cache'+os.path.sep+filename)
 
+            # get branches(gameversions) for mincraft-assets repository by InventivetalentDev
             branches = {b['name']:b for b in json.loads(read_url("https://api.github.com/repos/InventivetalentDev/minecraft-assets/branches?per_page=99999", False))}
-            # releases matching the game.major.minor versioning schema
+            # filter releases matching the game.major.minor versioning schema
             releases = list(filter(re.compile(r'^\d+\.\d+(\.\d+)?$').match, list(branches)))
-            # removing .minor suffix and noting down most recent ver
+            # filter versions to most recent major versions
             majorrel = dict({re.compile(r'^\d+\.\d+').match(r)[0]: r for r in releases})
-            # get releases where there should be custommodeldata (don't match known older releases)
+            # filter releases where there should be custommodeldata; don't match known older releases
             validrel = {mj:mn for mj,mn in majorrel.items() if mj not in list(filter(re.compile(r'^1\.(\d|1[0-2])$').match, majorrel))}
             # get a list of all item models and where we can fetch their data
             ret = {}
             for mj,mn in validrel.items():
-                sha = branches[mn]['commit']['sha']
-                # follow these directories
-                for x in ['assets','minecraft','models','item']:
-                    # print(x)
-                    data = json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/trees/{sha}"))
+                sha = branches[mn]['commit']['sha'] # main dir
+                for x in ['assets','minecraft','models','item']: # follow these directories
+                    data = json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/trees/{sha}", True, True))
                     for i in data['tree']:
-                        if i['path'] == x:
+                        if i['path'] == x: # find the next directory; continue.
                             sha = i['sha']
-                # sha variable now points at assets/minecraft/models/item for the specified version
-                data = json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/trees/{sha}"))
+                # sha variable now points at assets/minecraft/models/item
+                data = json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/trees/{sha}", True, True))
+                # return the data for this version; reduce to filename and sha 
                 ret[mj] = {i['path'].split('.')[0]: i['sha'] for i in data['tree']}
-                # # list all the item models
-                # print([i['path'] for i in data['tree'] if i['type']=='blob'])
-            self._next_datacheck = time()+cachetime
+            self._next_datacheck = time()+cachetime # set the next check time and return data
             return(ret)
 
 
@@ -90,47 +91,64 @@ class S(BaseHTTPRequestHandler):
         self.send_header("Content-type", contype)
         self.end_headers()
 
-    def _html(self, message):
-        """This just generates an HTML document that includes `message`
-        in the body. Override, or re-write this do do more interesting stuff.
+    def _msgdump(self, message="OK", resp=200):
+        self._set_headers("text/html", resp)
+        self.wfile.write(f"<html><body><h1>{resp}: {message}</h1></body></html>".encode())
 
-        """
-        content = f"<html><body><h1>{message}</h1></body></html>"
-        return content.encode("utf8")  # NOTE: must return a bytes object!
+    def _jdump(self, data, resp=200):
+        self._set_headers("application/json", resp)
+        self.wfile.write(json.dumps(data).encode())
 
     def do_GET(self):
         global mcasset
-        path = self.path.strip('/').split('/')
-        if path[0] == 'api':
-            self._set_headers("application/json")
+        stuff = self.path.split('?')
+        if len(stuff) < 2:
+            stuff.append('')
+        path = stuff[0].strip('/').split('/')
+        query = [q.split('=', 1) for q in stuff[1].split('&')]
         if path[0] == '' or path[0] == 'index.html':
             self._set_headers()
-            # self.wfile.write(self._html("hi!: "+"\n"+json.dumps(mcasset.vdata(), indent=4, sort_keys=True)))
+            # self.wfile.write(self._html("hi!: "+"\n"+json.dumps(mcasset.vdata())))
             # self.wfile.write(self._html("this is the main page!"))
             self.wfile.write(read_url('index.html'))
         elif len(path) == 1 and path[0] == 'api':
-            self.wfile.write(json.dumps(['item-models'], indent=4, sort_keys=True).encode())
+            self._jdump(['item-models', 'pack'])
+        elif len(path) == 2 and path[0] == 'api' and path[1] == 'pack':
+            print('yay!')
+            ids = set()
+            for k, v in query:
+                if k == 'url':
+                    print(k, v)
+                    v = urlunq(v)
+                    # do url stuff
+                if k == 'id':
+                    v = [int(y) for y in v.split('-')] # generate list of integers split by '-'
+                    if len(v) < 2: # if only 1 integer, use that as both start and end
+                        v.append(v[0])
+                    ids.update(range(v[0], v[1]+1)) # add range from start to end to our id set
+            print(ids)
+            print(query)
+            self._jdump(['yay'])
         elif len(path) >= 2 and path[0] == 'api' and path[1] == 'item-models':
-            if len(path) == 2:
-                self.wfile.write(json.dumps(list(mcasset.vdata().keys()), indent=4, sort_keys=True).encode())
-            elif len(path) >= 3 and path[2] in mcasset.vdata():
+            if len(path) == 2: # if no version number specified, list the versions avail
+                vhist = read_url(f"https://minecraft.gamepedia.com/Java_Edition_version_history")
+                self._jdump({v:htmlunesc(re.search(r'mw-headline[^>]+>'+v+r'(?:[^>]+>){24}(?:[^\"]+\"){2} title=\"([^\"]+)\"', vhist)[1]) for v in mcasset.vdata().keys()})
+            elif len(path) >= 3 and path[2] in mcasset.vdata(): # if version valid, send list of item models
                 if len(path) >= 4:
                     if path[3] in mcasset.vdata()[path[2]]:
-                        # self.wfile.write(json.dumps(mcasset.vdata()[path[2]][path[3]], indent=4, sort_keys=True).encode())
-                        self.wfile.write(b64decode(json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/blobs/{mcasset.vdata()[path[2]][path[3]]}"))['content']))
+                        # self._jdump(mcasset.vdata()[path[2]][path[3]])
+                        self.wfile.write(b64decode(json.loads(read_url(f"https://api.github.com/repos/InventivetalentDev/minecraft-assets/git/blobs/{mcasset.vdata()[path[2]][path[3]]}", True, True))['content']))
                         # self.wfile.write()   
                 else:
-                    self.wfile.write(json.dumps(mcasset.vdata()[path[2]], indent=4, sort_keys=True).encode())
+                    self._jdump(mcasset.vdata()[path[2]])
         else:
-            self._set_headers("text/html", 404)
-            self.wfile.write(self._html("404: Not Found"))
+            self._msgdump("Not Found", 404)
     def do_HEAD(self):
         self._set_headers()
 
     def do_POST(self):
         # Doesn't do anything with posted data
-        self._set_headers()
-        self.wfile.write(self._html("POST!"))
+        self._msgdump("POST!")
 
 
 def run(server_class=HTTPServer, handler_class=S, addr="localhost", port=8000):
