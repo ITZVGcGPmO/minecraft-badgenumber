@@ -130,6 +130,9 @@ class S(BaseHTTPRequestHandler):
             # self.wfile.write(self._html("hi!: "+"\n"+json.dumps(mcasset.vdata())))
             # self.wfile.write(self._html("this is the main page!"))
             self.wfile.write(open(cwd+'index.html', 'r').read().encode())
+        elif path[0] == 'font.ttf':
+            self._set_headers("font/truetype")
+            self.wfile.write(open(cwd+'minecraft_font.ttf', 'r').read().encode('ascii'))
         elif len(path) == 1 and path[0] == 'api': # list valid api options
             self._jdump(['item-models', 'pack', 'registered'])
         elif len(path) == 2 and path[0] == 'api' and path[1] == 'pack': # join multiple resource packs together, with overrides merge

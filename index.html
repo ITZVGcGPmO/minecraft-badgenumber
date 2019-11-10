@@ -71,7 +71,7 @@
         }
     </script>
 </head>
-<body onload="init();">
+<body onload="init();" style="background-color: black; color: lightgray;">
     <!-- Game Version: <select id="selectGameVersion" />
     <script type="text/javascript">
         function Get(yourUrl){
@@ -90,25 +90,47 @@
             select.appendChild(el);
         }
     </script> -->
-    merge your datapacks with <a href="/api/pack">/api/pack</a> and see custom model data entries at <a href="/api/registered">/api/registered</a>
+    <!-- merge your datapacks with <a href="/api/pack">/api/pack</a> and see custom model data entries at <a href="/api/registered">/api/registered</a> -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js" integrity="sha384-tsQFqpEReu7ZLhBV2VZlAu7zcOV+rXbYlF2cqB8txI/8aZajjp4Bqd+V6D5IgvKT" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/94/three.min.js" integrity="sha384-MfK8xH4ODcCgK4ujJ7mz6wFutdKgC+O2uEXwYLEARgXLsNAw3uGfDVHJSPZ2iGgQ" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/gh/InventivetalentDev/MineRender@1.1.0/dist/model.min.js" integrity="sha384-5lqEsQrWEkIed3a/ACdzSWx5NMzBoPa7r+dKeDUKECGxgV81BU5rtTvCTYY/CDMI" crossorigin="anonymous"></script>
-    <div id="recent_item_reservation_scroller" style="height:500px;width:500px;overflow:auto;border:8px solid yellowgreen;"></div>
-    <!-- <div id="myItemContainer"></div> -->
-<!--     <script type="text/javascript">
-
-        var modelRender = new ModelRender({
-            autoResize: true,      // Whether to automatically resize the canvas
-            controls: {
-                enabled: true,      // Toggle controls
-                zoom: true,         // Toggle zooming
-                rotate: true,      // Toggle rotation
-                pan: false           // Toggle panning
+    <script type="text/javascript">
+        function editor() {
+            if (document.getElementById("editor_area").value == "") {
+                document.getElementById("editor_copybox").value = ""
+            } else {
+                var l = document.getElementById("editor_area").value.split("\n");
+                var page = window.location.href+"api/pack?";
+                for (var i = 0; i < l.length; i++) {
+                    page = page+"url="+encodeURIComponent(l[i])+"&"
+                }
+                page = page.substring(0, page.length - 1)
+                document.getElementById("editor_copybox").value = page
             }
-        }, document.getElementById("myItemContainer"));
-
-        modelRender.render(["item/diamond_block"]);
-    </script> -->
+        }
+    </script>
+    <div class="row">
+        <div style="float: left; width: 60%;">
+            Combine resourcepack(s): <small>(1 per line)</small>
+            <div id="merger_editor" style="border:1px solid lightgray;padding:0px;">
+                <textarea id="editor_area" style="width: 99%;height: 400px;resize: none;" oninput="editor();"></textarea>
+                <textarea readonly id="editor_copybox" style="float: left;width: 59%;resize: none;" rows="1" onfocus="this.select();" onclick="this.select();"></textarea>
+                <button style="width: 20%;" onclick="document.getElementById('editor_copybox').select();document.execCommand('copy');">Copy</button>
+                <button style="float: right;width: 20%;" onclick="window.open(document.getElementById('editor_copybox').value)">Submit</button>
+            </div>
+        </div>
+        <div style="float: left; width: 40%;">
+            Registered models: <small>(from combined packs)</small>
+            <div id="recent_item_reservation_scroller" style="border:1px solid lightgray;padding:0px;"></div>
+        </div>
+    </div>
+    <style type="text/css">
+        html,body { height: 100%; margin: 0px; padding: 0px; }
+        .row:after {
+          content: "";
+          display: table;
+          clear: both;
+        }
+    </style>
 </body>
 </html>
