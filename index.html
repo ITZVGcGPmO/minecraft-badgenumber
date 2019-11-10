@@ -1,10 +1,78 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Something</title>
+    <title>MC-BN</title>
+    <script type="text/javascript">
+        function init() {
+            function connect() {
+                var ws;
+                
+                function send_obj(obj) {
+                  ws.send(JSON.stringify(obj));
+                }
+                // Connect to Web Socket
+                ws = new WebSocket("ws://minecraft.badgenumber.com:1388/");
+
+                // Set event handlers.
+                // ws.onopen = function() {
+                // output("onopen");
+                // };
+
+                ws.onmessage = function(e) {
+                // e.data contains received string.
+                    // output("onmessage: " + e.data);
+                    var j = JSON.parse(e.data);
+                    if (j.hasOwnProperty("gl_itemmodel_update")) { // recv item model registry update, can have duplicates
+                        console.log(j.gl_itemmodel_update);
+                        var elmid = 'recent_item_reservation.'+j.gl_itemmodel_update[0]+'.'+j.gl_itemmodel_update[1];
+
+                        var delMe = document.getElementById(elmid);
+                        if (delMe) {
+                            delMe.remove();
+                        }
+
+                        document.getElementById("recent_item_reservation_scroller").insertAdjacentHTML('afterbegin', 
+                            '<div class="recent_item_reservation" style="height: 100px;" id="'+elmid+'">'+
+                            '<div class="item_display" style="max-width: 100px; max-height: 100px; float: left;"></div>'+
+                            j.gl_itemmodel_update[0]+'<br>'+
+                            j.gl_itemmodel_update[1]+
+                            '</div>');
+                        var modelRender = new ModelRender({
+                            autoResize: true,      // Whether to automatically resize the canvas
+                            controls: {
+                                enabled: true,      // Toggle controls
+                                zoom: true,         // Toggle zooming
+                                rotate: true,      // Toggle rotation
+                                pan: false           // Toggle panning
+                            },
+                            canvas: {               // Dimensions the canvas starts off with (undefined -> use window size)
+                                width: 100,
+                                height: 100
+                            }
+                        }, document.getElementById(elmid).getElementsByClassName("item_display")[0]);
+
+                        modelRender.render(["item/"+j.gl_itemmodel_update[0]]);
+                    }
+                };
+
+                ws.onclose = function(e) {
+                    console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+                    setTimeout(function() {
+                        connect();
+                    }, 1000);
+                };
+
+                // ws.onerror = function(e) {
+                // output("onerror");
+                // console.log(e)
+                // };
+            }
+            connect();
+        }
+    </script>
 </head>
-<body>
-    Game Version: <select id="selectGameVersion" />
+<body onload="init();">
+    <!-- Game Version: <select id="selectGameVersion" />
     <script type="text/javascript">
         function Get(yourUrl){
             var Httpreq = new XMLHttpRequest(); // a new request
@@ -21,6 +89,26 @@
             el.value = iterkeys[i];
             select.appendChild(el);
         }
-    </script>
+    </script> -->
+    merge your datapacks with <a href="/api/pack">/api/pack</a> and see custom model data entries at <a href="/api/registered">/api/registered</a>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js" integrity="sha384-tsQFqpEReu7ZLhBV2VZlAu7zcOV+rXbYlF2cqB8txI/8aZajjp4Bqd+V6D5IgvKT" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/94/three.min.js" integrity="sha384-MfK8xH4ODcCgK4ujJ7mz6wFutdKgC+O2uEXwYLEARgXLsNAw3uGfDVHJSPZ2iGgQ" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/gh/InventivetalentDev/MineRender@1.1.0/dist/model.min.js" integrity="sha384-5lqEsQrWEkIed3a/ACdzSWx5NMzBoPa7r+dKeDUKECGxgV81BU5rtTvCTYY/CDMI" crossorigin="anonymous"></script>
+    <div id="recent_item_reservation_scroller" style="height:500px;width:500px;overflow:auto;border:8px solid yellowgreen;"></div>
+    <!-- <div id="myItemContainer"></div> -->
+<!--     <script type="text/javascript">
+
+        var modelRender = new ModelRender({
+            autoResize: true,      // Whether to automatically resize the canvas
+            controls: {
+                enabled: true,      // Toggle controls
+                zoom: true,         // Toggle zooming
+                rotate: true,      // Toggle rotation
+                pan: false           // Toggle panning
+            }
+        }, document.getElementById("myItemContainer"));
+
+        modelRender.render(["item/diamond_block"]);
+    </script> -->
 </body>
 </html>

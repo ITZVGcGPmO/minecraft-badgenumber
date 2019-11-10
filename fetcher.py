@@ -4,16 +4,33 @@ import json
 import os.path
 import os
 from time import time, sleep
-import argparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from websocket_server import WebsocketServer
 from base64 import b64decode
 from urllib.parse import unquote as urlunq
 from html import unescape as htmlunesc
 import tempfile
 from io import BytesIO
 from zipfile import ZipFile
+import sqlite3
+import hashlib
+import _thread
+mdb_conn = sqlite3.connect("m.db", check_same_thread=False)
+mdb = mdb_conn.cursor()
+try:
+    mdb.execute("""
+    CREATE TABLE item (
+    item_name TEXT,
+    model_num INTEGER,
+    pack_sha384 BLOB,
+    updated_on INTEGER,
+    UNIQUE(item_name,model_num,pack_sha384));""")
+    mdb_conn.commit()
+except sqlite3.OperationalError:
+    pass
 cachetime = (7*24*60*60)
 cachedir = os.getcwd()+os.path.sep+'cache'
+cwd = os.getcwd()+os.path.sep
 
 def read_url(url, cache=True, noexpire=False):
     global cachetime
@@ -112,43 +129,70 @@ class S(BaseHTTPRequestHandler):
             self._set_headers()
             # self.wfile.write(self._html("hi!: "+"\n"+json.dumps(mcasset.vdata())))
             # self.wfile.write(self._html("this is the main page!"))
-            self.wfile.write(open('index.html', 'r').read().encode())
-        elif len(path) == 1 and path[0] == 'api':
-            self._jdump(['item-models', 'pack'])
+            self.wfile.write(open(cwd+'index.html', 'r').read().encode())
+        elif len(path) == 1 and path[0] == 'api': # list valid api options
+            self._jdump(['item-models', 'pack', 'registered'])
         elif len(path) == 2 and path[0] == 'api' and path[1] == 'pack': # join multiple resource packs together, with overrides merge
-            cfilename = f'pack{hash(json.dumps(query))}.zip'
-            cfile = cachedir+os.path.sep+cfilename
-            if not (os.path.isfile(cfile) and os.path.getmtime(cfile)+cachetime > time()): # check if the work has been done already
-                print('merging packs')
-                with tempfile.TemporaryDirectory() as tmp:
-                    os.chdir(tmp) # work in a temporary directory
-                    for k, v in query:
-                        if k == 'url':
-                            v = urlunq(v)
-                            print(k, v)
-                            zipfile = ZipFile(BytesIO(read_url(v)))
-                            for member in zipfile.namelist():
-                                if not os.path.isfile(member): # if no file, extract it
-                                    zipfile.extract(member)
-                                elif member.endswith('.json') and os.path.isfile(member): # if valid json file
-                                    merge = json.loads(zipfile.read(member)) # load a file that we could merge in
-                                    if 'overrides' in merge and len(merge['overrides']) > 0: # only if there's overrides to extend in
-                                        orig = json.load(open(member)) # read original json
-                                        if 'overrides' not in orig: # if no override list, create it
-                                            orig['overrides'] = []
-                                        orig['overrides'].extend(merge['overrides']) # merge in the overrides
-                                        open(member, 'w').write(json.dumps(orig, indent=4, sort_keys=True)) # dump json back out
-                    with ZipFile(cfile, 'w') as zipObj: # zip up temp directory
-                        for folderName, subfolders, filenames in os.walk('.'):
-                            for filename in filenames:
-                                filePath = os.path.join(folderName, filename)
-                                zipObj.write(filePath)
-            with open(cfile, 'rb') as file: # offer zip file download
-                self.send_response(200)
-                self.send_header("Content-type", "application/zip")
-                self.send_header("Content-Disposition", f'attachment; filename="{cfilename}"')
-                self.end_headers()
-                self.wfile.write(file.read())
+            try:
+                cfilename = f'pack{hash(json.dumps(query))}.zip'
+                cfile = cachedir+os.path.sep+cfilename
+                if not (os.path.isfile(cfile) and os.path.getmtime(cfile)+cachetime > time()): # check if the work has been done already
+                    print('merging packs')
+                    now = time()
+                    with tempfile.TemporaryDirectory() as tmp:
+                        os.chdir(tmp) # work in a temporary directory
+                        for k, v in query:
+                            if k == 'url':
+                                v = urlunq(v)
+                                # print(k, v)
+                                opener = BytesIO(read_url(v))
+                                ziphash = hashlib.sha384()
+                                ziphash.update(opener.getvalue())
+                                ziphash = ziphash.digest()
+                                zipfile = ZipFile(opener)
+                                for member in zipfile.namelist():
+                                    result = re.search(r'assets\/minecraft\/models\/item\/(.+)\.json$', member)
+                                    if result:
+                                        nwfl = json.loads(zipfile.read(member)) # read file from zip
+                                        if 'overrides' in nwfl and len(nwfl['overrides']) > 0: # if overrides
+                                            for x in nwfl['overrides']: # add model numbers to database
+                                                if 'predicate' in x and 'custom_model_data' in x['predicate']:
+                                                    m = x['predicate']['custom_model_data']
+                                                    # print(f"]== override:\nitem:{result[1]}\nmodelnum:{m}\npackhash:{ziphash}\nurl:{v}\ntime:{now}")
+                                                    mdb.execute("INSERT or REPLACE INTO item VALUES (?, ?, ?, ?)", (result[1], m, ziphash, int(now)))
+                                                    send_obj({"gl_itemmodel_update":[result[1], m, ziphash.hex(), int(now)]})
+                                            if os.path.isfile(member): # do override merging
+                                                exst = json.load(open(member)) # read existing file
+                                                if 'overrides' not in exst: # if no overrides, create
+                                                    exst['overrides'] = []
+                                                exst['overrides'].extend(nwfl['overrides']) # merge overrides
+                                                open(member, 'w').write(json.dumps(orig, indent=4, sort_keys=True)) # dump json to file
+                                    if not os.path.isfile(member): # if no file, extract it
+                                        zipfile.extract(member)
+                                mdb_conn.commit()
+                        with ZipFile(cfile, 'w') as zipObj: # zip up temp directory, to cache
+                            for folderName, subfolders, filenames in os.walk('.'):
+                                for filename in filenames:
+                                    filePath = os.path.join(folderName, filename)
+                                    zipObj.write(filePath)
+                with open(cfile, 'rb') as file: # offer zip file download, from cache
+                    self.send_response(200)
+                    self.send_header("Content-type", "application/zip")
+                    self.send_header("Content-Disposition", f'attachment; filename="{cfilename}"')
+                    self.end_headers()
+                    self.wfile.write(file.read())
+            except ValueError:
+                self._jdump({'FORMAT':'/api/pack/?url=<resourcepackurl1>&url=<resourcepackurl2>&url=<resourcepackurl3>','USE':'combine your super special resource packs, with predicate merging'})
+                pass
+        elif len(path) == 2 and path[0] == 'api' and path[1] == 'registered':
+            if query[0][0] == '': # if no query
+                # serve most recent additions to database
+                self._jdump([{'item_name':i,'model_num':n,'pack_sha384':s.hex(),'updated_on':u} for i,n,s,u in mdb.execute("SELECT * FROM item ORDER BY updated_on DESC LIMIT 64")])
+                # # serve entire database
+                # self._jdump([{'item_name':i,'model_num':n,'pack_sha384':s.hex(),'updated_on':u} for i,n,s,u in mdb.execute("select * from item")])
+            else:
+                # TODO serve specific item/modelnum/packhash/etc from database
+                pass
         elif len(path) >= 2 and path[0] == 'api' and path[1] == 'item-models':
             if len(path) == 2: # if no version number specified, list the versions avail
                 vhist = read_url(f"https://minecraft.gamepedia.com/Java_Edition_version_history").decode()
@@ -168,32 +212,37 @@ class S(BaseHTTPRequestHandler):
     def do_POST(self):
         # Doesn't do anything with posted data
         self._msgdump("POST!")
+def send_obj(obj, client=False):
+    if client==False:
+        ws_server.send_message_to_all(json.dumps(obj))
+    else:
+        ws_server.send_message(client, json.dumps(obj))
 
+# Called for every client connecting (after handshake)
+def new_client(client, server):
+    print("New client connected and was given id %d" % client['id'])
+    for i,n,s,u in reversed(list(mdb.execute("SELECT * FROM item ORDER BY updated_on DESC LIMIT 16"))):
+        send_obj({"gl_itemmodel_update":[i,n,s.hex(),u]}, client) 
 
-def run(server_class=HTTPServer, handler_class=S, addr="localhost", port=8000):
-    server_address = (addr, port)
-    httpd = server_class(server_address, handler_class)
-
-    print(f"Starting httpd server on {addr}:{port}")
-    httpd.serve_forever()
-
+# Called for every client disconnecting
+def client_left(client, server):
+    print("Client(%d) disconnected" % client['id'])
+# Called when a client sends a message
+def message_received(client, server, message):
+    for k, v in json.loads(message).items():
+        print(k, v)
+    # print("Client(%d) said: %s" % (client['id'], message))
+    # server.send_message_to_all("Client(%d) said: %s" % (client['id'], message))
+    # server.send_message(client, "")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run a simple HTTP server")
-    parser.add_argument(
-        "-l",
-        "--listen",
-        default="localhost",
-        help="Specify the IP address on which the server listens",
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        type=int,
-        default=8000,
-        help="Specify the port on which the server listens",
-    )
-    args = parser.parse_args()
     print("Loading MCAssetManager")
     mcasset = McAssetManager()
-    run(addr=args.listen, port=args.port)
+    print("Loading WebsocketServer")
+    ws_server = WebsocketServer(1388, host='')
+    ws_server.set_fn_new_client(new_client)
+    ws_server.set_fn_client_left(client_left)
+    ws_server.set_fn_message_received(message_received)
+    _thread.start_new_thread(ws_server.run_forever, ())
+    print(f"Loading HTTPServer")
+    HTTPServer(('', 80), S).serve_forever()
